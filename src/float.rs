@@ -5,7 +5,7 @@ pub enum Precision {
     Bits32,
     Bits64,
 }
-pub trait EngineFloat : RealField + Send + Sync {
+pub trait EngineFloat : RealField + From<f32> + Default + Send + Sync {
     /// Returns the precision of the float (e.g. 32 bit or 64 bit)
     /// This is used to determine shader formats etc.
     fn precision() -> Precision;

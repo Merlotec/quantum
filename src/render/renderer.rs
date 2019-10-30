@@ -14,7 +14,12 @@ use rendy::{
         },
     },
     hal,
-    wsi::winit::Window,
+    wsi::winit::{
+        Window,
+        WindowBuilder,
+        EventsLoop,
+        Event,
+    },
     wsi::Surface,
 };
 use crate::EngineFloat;
@@ -23,32 +28,28 @@ use std::marker::PhantomData;
 use crate::render::pipe;
 
 pub struct Renderer<F: EngineFloat, B: hal::Backend> {
+    window: Window,
+    events_loop: EventsLoop,
     factory: Factory<B>,
     families: Families<B>,
-    frames: usize,
     graph: Graph<B, World>,
     _f: PhantomData<F>,
 }
 
 impl<F: EngineFloat, B: hal::Backend> Renderer<F, B> {
-    pub fn init(window: &Window, world: &World) -> Self {
+    pub fn init(window_builder: WindowBuilder, world: &World) -> Self {
         let config: Config = Default::default();
 
         let (mut factory, mut families): (Factory<B>, _) = rendy::factory::init(config).unwrap();
 
-        let surface: Surface<B> = factory.create_surface(window.into());
+        let events_loop: EventsLoop = EventsLoop::new();
+        let window: Window = window_builder.build(&events_loop).unwrap();
+
+        let surface: Surface<B> = factory.create_surface(&window);
         let extent = unsafe { surface.extent(factory.physical()) }.expect("Failed to get surface extent from surface!");
 
         let mut graph_builder = GraphBuilder::<B, World>::new();
 
-        let color = graph_builder.create_image(
-            hal::image::Kind::D2(extent.width, extent.height, 1, 1),
-            1,
-            factory.get_surface_format(&surface),
-            Some(hal::command::ClearValue::Color(
-                [1.0, 1.0, 1.0, 1.0].into(),
-            )),
-        );
 
         let depth = graph_builder.create_image(
             hal::image::Kind::D2(extent.width, extent.height, 1, 1),
@@ -59,24 +60,38 @@ impl<F: EngineFloat, B: hal::Backend> Renderer<F, B> {
             )),
         );
 
-        let pass = graph_builder.add_node(
+
+        graph_builder.add_node(
             pipe::mesh::MeshRenderPipeline::<F, B>::builder()
                 .into_subpass()
-                .with_color(color)
+                .with_color_surface()
                 .with_depth_stencil(depth)
-                .into_pass(),
+                .into_pass()
+                .with_surface(
+                    surface,
+                    Some(hal::command::ClearValue::Color([0.0, 0.0, 0.0, 1.0].into()))
+                )
         );
-
-        let present_builder = PresentNode::builder(&factory, surface, color).with_dependency(pass);
-
-        let frames = present_builder.image_count() as usize;
-
-        graph_builder.add_node(present_builder);
 
         let mut graph = graph_builder
             .build(&mut factory, &mut families, &world)
             .unwrap();
 
-        Self { factory, families, frames, graph, _f: PhantomData }
+        Self { window, events_loop, factory, families, graph, _f: PhantomData }
+    }
+
+    /// Renders the specified world.
+    pub fn render(&mut self, world: &mut World) {
+        self.factory.maintain(&mut self.families);
+        self.graph.run(&mut self.factory, &mut self.families, world);
+    }
+
+    pub fn window(&self) -> &Window {
+        &self.window
+    }
+
+    pub fn poll_events<C>(&mut self, callback: C)
+        where C: FnMut(Event) {
+        self.events_loop.poll_events(callback);
     }
 }
